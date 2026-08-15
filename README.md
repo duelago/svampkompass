@@ -1,6 +1,6 @@
 # svampkompass
 
-A new Flutter project.
+Gå inte vilse i skogen när du plockar svamp
 
 ## Getting Started
 
