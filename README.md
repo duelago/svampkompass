@@ -1,4 +1,4 @@
-# svampkompass
+# Svampkompass
 
 Gå inte vilse i skogen när du plockar svamp
 
