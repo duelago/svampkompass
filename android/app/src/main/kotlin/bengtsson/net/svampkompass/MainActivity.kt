@@ -1,4 +1,4 @@
-package com.example.svampkompass
+package bengtsson.net.svampkompass
 
 import io.flutter.embedding.android.FlutterActivity
 
