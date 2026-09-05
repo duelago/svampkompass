@@ -8,6 +8,8 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'navigation.dart';
+
 const _chanterelle = Color(0xffff8c00);
 
 Future<void> main() async {
@@ -253,25 +255,15 @@ class _CompassScreenState extends State<CompassScreen> {
     place.latitude,
     place.longitude,
   );
-  double _bearingTo(Place place) {
-    final latitude1 = _position!.latitude * math.pi / 180;
-    final latitude2 = place.latitude * math.pi / 180;
-    final longitudeDifference =
-        (place.longitude - _position!.longitude) * math.pi / 180;
-    final y = math.sin(longitudeDifference) * math.cos(latitude2);
-    final x =
-        math.cos(latitude1) * math.sin(latitude2) -
-        math.sin(latitude1) *
-            math.cos(latitude2) *
-            math.cos(longitudeDifference);
-    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
-  }
+  double _bearingTo(Place place) => bearingBetween(
+    _position!.latitude,
+    _position!.longitude,
+    place.latitude,
+    place.longitude,
+  );
 
   double _relativeBearing(Place place) =>
       (_bearingTo(place) - (_courseHeading ?? _heading)) * math.pi / 180;
-  String _distance(double meters) => meters < 1000
-      ? '${meters.round()} m'
-      : '${(meters / 1000).toStringAsFixed(1)} km';
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +308,7 @@ class _CompassScreenState extends State<CompassScreen> {
                     _CompassCard(
                       color: Colors.black,
                       title: 'HEM',
-                      distance: _distance(_distanceTo(_home!)),
+                      distance: formatDistance(_distanceTo(_home!)),
                       angle: _relativeBearing(_home!),
                       prominent: true,
                     )
@@ -337,7 +329,7 @@ class _CompassScreenState extends State<CompassScreen> {
                     _CompassCard(
                       color: _chanterelle,
                       title: _selectedSpot!.name,
-                      distance: _distance(_distanceTo(_selectedSpot!)),
+                      distance: formatDistance(_distanceTo(_selectedSpot!)),
                       angle: _relativeBearing(_selectedSpot!),
                     )
                   else
@@ -365,8 +357,9 @@ class _CompassScreenState extends State<CompassScreen> {
                       child: Text('Inga sparade ställen ännu.'),
                     )
                   else
-                    ..._spots.map(
-                      (spot) => Card(
+                    ..._spots.map((spot) {
+                      final meters = _distanceTo(spot);
+                      return Card(
                         clipBehavior: Clip.antiAlias,
                         child: ListTile(
                           selected: _selectedSpot == spot,
@@ -376,7 +369,9 @@ class _CompassScreenState extends State<CompassScreen> {
                           onTap: () => setState(() => _selectedSpot = spot),
                           title: Text(spot.name),
                           subtitle: Text(
-                            '${_distanceTo(spot) < 4 ? 'Du är framme' : _distance(_distanceTo(spot))} bort',
+                            meters < 4
+                                ? 'Du är framme'
+                                : '${formatDistance(meters)} bort',
                           ),
                           leading: Icon(
                             _selectedSpot == spot
@@ -390,8 +385,8 @@ class _CompassScreenState extends State<CompassScreen> {
                             icon: const Icon(Icons.delete_outline),
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    }),
                 ],
               ),
             ),
