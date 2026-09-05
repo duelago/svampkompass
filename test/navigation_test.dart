@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:svampkompass/main.dart';
+import 'package:svampkompass/navigation.dart';
 
 // Facit är framräknat med samma storcirkelformel oberoende av appen, mot
 // geografisk nord. Se issue #2: kompasspilen jämför de här värdena med
