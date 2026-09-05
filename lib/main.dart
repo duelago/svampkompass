@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'navigation.dart';
+import 'place.dart';
 
 const _chanterelle = Color(0xffff8c00);
 
@@ -32,27 +33,6 @@ class SvampkompassApp extends StatelessWidget {
   );
 }
 
-class Place {
-  const Place({
-    required this.name,
-    required this.latitude,
-    required this.longitude,
-  });
-  final String name;
-  final double latitude;
-  final double longitude;
-  Map<String, dynamic> toJson() => {
-    'name': name,
-    'lat': latitude,
-    'lng': longitude,
-  };
-  factory Place.fromJson(Map<String, dynamic> json) => Place(
-    name: json['name'] as String,
-    latitude: (json['lat'] as num).toDouble(),
-    longitude: (json['lng'] as num).toDouble(),
-  );
-}
-
 class CompassScreen extends StatefulWidget {
   const CompassScreen({super.key});
   @override
@@ -69,6 +49,7 @@ class _CompassScreenState extends State<CompassScreen> {
   double _heading = 0;
   double? _courseHeading;
   String? _error;
+  bool _errorNeedsSettings = false;
   bool _loading = true;
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
@@ -93,21 +74,16 @@ class _CompassScreenState extends State<CompassScreen> {
 
   Future<void> _loadAndStart() async {
     final prefs = await SharedPreferences.getInstance();
-    final homeString = prefs.getString(_homeKey);
-    final spotsString = prefs.getString(_spotsKey);
+    // Trasig sparad data fick tidigare hela initieringen att kasta, vilket
+    // gjorde appen ostartbar tills användaren rensade appdatan -- alltså
+    // raderade precis de svampställen som skulle skyddas.
+    final home = decodePlace(prefs.getString(_homeKey));
+    final spots = decodePlaces(prefs.getString(_spotsKey));
     if (mounted) {
       setState(() {
-        if (homeString != null) {
-          _home = Place.fromJson(
-            jsonDecode(homeString) as Map<String, dynamic>,
-          );
-        }
-        if (spotsString != null) {
-          _spots = (jsonDecode(spotsString) as List<dynamic>)
-              .map((item) => Place.fromJson(item as Map<String, dynamic>))
-              .toList();
-          _selectedSpot = _spots.isEmpty ? null : _spots.first;
-        }
+        _home = home;
+        _spots = spots;
+        _selectedSpot = spots.isEmpty ? null : spots.first;
       });
     }
     _compassSubscription = FlutterCompass.events?.listen(_updateHeading);
@@ -131,8 +107,18 @@ class _CompassScreenState extends State<CompassScreen> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
+      if (permission == LocationPermission.deniedForever) {
+        // requestPermission visar ingen dialog i det här läget, så "Försök
+        // igen" kunde aldrig lyckas -- knappen såg bara ut att inte göra
+        // någonting. Enda vägen ut går via systeminställningarna.
+        _fail(
+          'Platsåtkomst är avstängd för Svampkompass. Slå på den i '
+          'inställningarna för att använda kompassen.',
+          openSettings: true,
+        );
+        return;
+      }
+      if (permission == LocationPermission.denied) {
         _fail('Tillåt platsåtkomst för att använda kompassen.');
         return;
       }
@@ -162,10 +148,11 @@ class _CompassScreenState extends State<CompassScreen> {
     }
   }
 
-  void _fail(String message) {
+  void _fail(String message, {bool openSettings = false}) {
     if (!mounted) return;
     setState(() {
       _error = message;
+      _errorNeedsSettings = openSettings;
       _loading = false;
     });
   }
@@ -182,6 +169,7 @@ class _CompassScreenState extends State<CompassScreen> {
       _courseHeading = hasCourse ? position.heading : null;
       _loading = false;
       _error = null;
+      _errorNeedsSettings = false;
     });
   }
 
@@ -383,7 +371,13 @@ class _CompassScreenState extends State<CompassScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? _ErrorState(message: _error!, onRetry: _startLocation)
+          ? _ErrorState(
+              message: _error!,
+              onRetry: _startLocation,
+              onOpenSettings: _errorNeedsSettings
+                  ? Geolocator.openAppSettings
+                  : null,
+            )
           : SafeArea(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
@@ -606,9 +600,14 @@ class _EmptyMushroomCard extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, required this.onRetry});
+  const _ErrorState({
+    required this.message,
+    required this.onRetry,
+    this.onOpenSettings,
+  });
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback? onOpenSettings;
   @override
   Widget build(BuildContext context) => Center(
     child: Padding(
@@ -620,7 +619,19 @@ class _ErrorState extends StatelessWidget {
           const SizedBox(height: 16),
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: 18),
-          FilledButton(onPressed: onRetry, child: const Text('Försök igen')),
+          if (onOpenSettings case final open?) ...[
+            FilledButton.icon(
+              onPressed: open,
+              icon: const Icon(Icons.settings_outlined),
+              label: const Text('Öppna inställningar'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Jag har slagit på den'),
+            ),
+          ] else
+            FilledButton(onPressed: onRetry, child: const Text('Försök igen')),
         ],
       ),
     ),
