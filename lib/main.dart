@@ -53,14 +53,6 @@ class Place {
   );
 }
 
-/// En radering som fortfarande går att ångra.
-class _Deletion {
-  const _Deletion(this.place, this.index, this.wasSelected);
-  final Place place;
-  final int index;
-  final bool wasSelected;
-}
-
 class CompassScreen extends StatefulWidget {
   const CompassScreen({super.key});
   @override
@@ -80,7 +72,11 @@ class _CompassScreenState extends State<CompassScreen> {
   bool _loading = true;
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
-  final List<_Deletion> _pendingDeletions = [];
+  // Listan som den såg ut innan den pågående raderingsserien började.
+  List<Place>? _undoSpots;
+  Place? _undoSelected;
+  int _undoCount = 0;
+  int _undoGeneration = 0;
 
   @override
   void initState() {
@@ -285,67 +281,74 @@ class _CompassScreenState extends State<CompassScreen> {
   Future<void> _deleteSpot(Place spot) async {
     final index = _spots.indexOf(spot);
     if (index < 0) return;
-    final wasSelected = _selectedSpot == spot;
+
+    // Ångra återställer hela listan som den såg ut innan serien började, i
+    // stället för att räkna ut var varje enskild post ska tillbaka. Två
+    // raderingar av index 0 i rad går inte att vända med index -- den andra
+    // posten hamnar före den första. En ögonblicksbild kan inte hamna fel.
+    final undoSpots = _undoSpots ?? _spots;
+    final undoSelected = _undoSpots == null ? _selectedSpot : _undoSelected;
+
     setState(() {
       _spots = [..._spots]..removeAt(index);
-      if (wasSelected) {
+      if (_selectedSpot == spot) {
         _selectedSpot = _spots.isEmpty ? null : _spots.first;
       }
     });
     await _saveSpots();
     if (!mounted) return;
 
-    // Papperskorgen sitter i samma rad som man trycker på för att välja
-    // ställe, så feltryck är att räkna med.
-    //
-    // Raderingar samlas ihop i stället för att ersätta varandra. Att bara
-    // visa en ny SnackBar hade dolt den föregående och tagit med sig dess
-    // Ångra, så en snabb andra radering hade gjort den första permanent.
-    _pendingDeletions.add(_Deletion(spot, index, wasSelected));
-    final pending = List<_Deletion>.of(_pendingDeletions);
+    _undoSpots = undoSpots;
+    _undoSelected = undoSelected;
+    _undoCount += 1;
+    final count = _undoCount;
+    // Varje SnackBar hör till sin egen generation. En som redan hunnit
+    // börja stängas får inte städa undan ångra-läget för en radering som
+    // gjorts efter den.
+    final generation = ++_undoGeneration;
+
     final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
-    final snackBar = messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          pending.length == 1
-              ? '${spot.name} borttaget'
-              : '${pending.length} ställen borttagna',
-        ),
-        action: SnackBarAction(
-          label: 'Ångra',
-          onPressed: () => _restoreDeletions(pending),
-        ),
-      ),
-    );
-    // Stängs den för att vi själva visar nästa lever ångra-möjligheten
-    // vidare i den nya. Alla andra sätt att stänga innebär att raderingen
-    // står fast.
-    snackBar.closed.then((reason) {
-      if (reason != SnackBarClosedReason.hide) {
-        _pendingDeletions.clear();
-      }
-    });
+    messenger
+        .showSnackBar(
+          SnackBar(
+            content: Text(
+              count == 1
+                  ? '${spot.name} borttaget'
+                  : '$count ställen borttagna',
+            ),
+            action: SnackBarAction(
+              label: 'Ångra',
+              onPressed: () => _undoDeletions(generation),
+            ),
+          ),
+        )
+        .closed
+        .then((reason) {
+          // hide betyder att vi själva visade nästa SnackBar, som tagit
+          // över ångra-möjligheten. Allt annat betyder att den löpt ut.
+          if (reason == SnackBarClosedReason.hide) return;
+          if (generation != _undoGeneration) return;
+          _forgetUndo();
+        });
   }
 
-  Future<void> _restoreDeletions(List<_Deletion> pending) async {
-    if (!mounted) return;
-    // Stigande ordning, så att varje post hamnar på sitt ursprungliga index.
-    final ordered = [...pending]..sort((a, b) => a.index.compareTo(b.index));
+  Future<void> _undoDeletions(int generation) async {
+    if (!mounted || generation != _undoGeneration) return;
+    final spots = _undoSpots;
+    if (spots == null) return;
+    final selected = _undoSelected;
     setState(() {
-      final spots = [..._spots];
-      for (final deletion in ordered) {
-        spots.insert(deletion.index.clamp(0, spots.length), deletion.place);
-      }
       _spots = spots;
-      for (final deletion in ordered) {
-        if (deletion.wasSelected) {
-          _selectedSpot = deletion.place;
-          break;
-        }
-      }
+      _selectedSpot = selected;
     });
-    _pendingDeletions.clear();
+    _forgetUndo();
     await _saveSpots();
+  }
+
+  void _forgetUndo() {
+    _undoSpots = null;
+    _undoSelected = null;
+    _undoCount = 0;
   }
 
   double _distanceTo(Place place) => Geolocator.distanceBetween(
