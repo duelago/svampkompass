@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'navigation.dart';
+import 'place.dart';
 
 const _chanterelle = Color(0xffff8c00);
 
@@ -32,27 +33,6 @@ class SvampkompassApp extends StatelessWidget {
   );
 }
 
-class Place {
-  const Place({
-    required this.name,
-    required this.latitude,
-    required this.longitude,
-  });
-  final String name;
-  final double latitude;
-  final double longitude;
-  Map<String, dynamic> toJson() => {
-    'name': name,
-    'lat': latitude,
-    'lng': longitude,
-  };
-  factory Place.fromJson(Map<String, dynamic> json) => Place(
-    name: json['name'] as String,
-    latitude: (json['lat'] as num).toDouble(),
-    longitude: (json['lng'] as num).toDouble(),
-  );
-}
-
 class CompassScreen extends StatefulWidget {
   const CompassScreen({super.key});
   @override
@@ -69,9 +49,15 @@ class _CompassScreenState extends State<CompassScreen> {
   double _heading = 0;
   double? _courseHeading;
   String? _error;
+  bool _errorNeedsSettings = false;
   bool _loading = true;
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
+  // Listan som den såg ut innan den pågående raderingsserien började.
+  List<Place>? _undoSpots;
+  Place? _undoSelected;
+  int _undoCount = 0;
+  int _undoGeneration = 0;
 
   @override
   void initState() {
@@ -88,21 +74,16 @@ class _CompassScreenState extends State<CompassScreen> {
 
   Future<void> _loadAndStart() async {
     final prefs = await SharedPreferences.getInstance();
-    final homeString = prefs.getString(_homeKey);
-    final spotsString = prefs.getString(_spotsKey);
+    // Trasig sparad data fick tidigare hela initieringen att kasta, vilket
+    // gjorde appen ostartbar tills användaren rensade appdatan -- alltså
+    // raderade precis de svampställen som skulle skyddas.
+    final home = decodePlace(prefs.getString(_homeKey));
+    final spots = decodePlaces(prefs.getString(_spotsKey));
     if (mounted) {
       setState(() {
-        if (homeString != null) {
-          _home = Place.fromJson(
-            jsonDecode(homeString) as Map<String, dynamic>,
-          );
-        }
-        if (spotsString != null) {
-          _spots = (jsonDecode(spotsString) as List<dynamic>)
-              .map((item) => Place.fromJson(item as Map<String, dynamic>))
-              .toList();
-          _selectedSpot = _spots.isEmpty ? null : _spots.first;
-        }
+        _home = home;
+        _spots = spots;
+        _selectedSpot = spots.isEmpty ? null : spots.first;
       });
     }
     _compassSubscription = FlutterCompass.events?.listen(_updateHeading);
@@ -117,30 +98,30 @@ class _CompassScreenState extends State<CompassScreen> {
   }
 
   Future<void> _startLocation() async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      if (mounted) {
-        setState(() {
-          _error = 'Platstjänster är avstängda.';
-          _loading = false;
-        });
-      }
-      return;
-    }
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        setState(() {
-          _error = 'Tillåt platsåtkomst för att använda kompassen.';
-          _loading = false;
-        });
-      }
-      return;
-    }
     try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        _fail('Platstjänster är avstängda.');
+        return;
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.deniedForever) {
+        // requestPermission visar ingen dialog i det här läget, så "Försök
+        // igen" kunde aldrig lyckas -- knappen såg bara ut att inte göra
+        // någonting. Enda vägen ut går via systeminställningarna.
+        _fail(
+          'Platsåtkomst är avstängd för Svampkompass. Slå på den i '
+          'inställningarna för att använda kompassen.',
+          openSettings: true,
+        );
+        return;
+      }
+      if (permission == LocationPermission.denied) {
+        _fail('Tillåt platsåtkomst för att använda kompassen.');
+        return;
+      }
       final first = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
@@ -155,13 +136,25 @@ class _CompassScreenState extends State<CompassScreen> {
         ),
       ).listen(_updatePosition);
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _error = 'Kunde inte hämta din position än.';
-          _loading = false;
-        });
+      // Behörighetskontrollerna ovan kan också kasta, till exempel på
+      // enheter utan Play Services. Utan det här blocket lämnades appen
+      // på en laddningssnurra utan felmeddelande och utan väg vidare.
+      _fail('Kunde inte hämta din position än.');
+    } finally {
+      // Sista utvägen: lämna aldrig kvar spinnern, oavsett hur vi tog oss ut.
+      if (mounted && _loading) {
+        setState(() => _loading = false);
       }
     }
+  }
+
+  void _fail(String message, {bool openSettings = false}) {
+    if (!mounted) return;
+    setState(() {
+      _error = message;
+      _errorNeedsSettings = openSettings;
+      _loading = false;
+    });
   }
 
   void _updatePosition(Position position) {
@@ -176,12 +169,46 @@ class _CompassScreenState extends State<CompassScreen> {
       _courseHeading = hasCourse ? position.heading : null;
       _loading = false;
       _error = null;
+      _errorNeedsSettings = false;
     });
   }
 
   Future<void> _setHome() async {
     final position = _position;
     if (position == null) return;
+    final previous = _home;
+    if (previous != null) {
+      // Hempositionen är det appen finns för. Ett felklick på hus-ikonen
+      // ska inte kunna ersätta bilens position med var man råkar stå.
+      final meters = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        previous.latitude,
+        previous.longitude,
+      );
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Ersätt hempositionen?'),
+          content: Text(
+            'Du har redan en hemposition ${formatDistance(meters)} härifrån. '
+            'Ersätter du den med platsen du står på nu går den gamla inte '
+            'att få tillbaka.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Behåll den gamla'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Ersätt'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     final place = Place(
       name: 'Startplats',
       latitude: position.latitude,
@@ -240,13 +267,76 @@ class _CompassScreenState extends State<CompassScreen> {
   }
 
   Future<void> _deleteSpot(Place spot) async {
+    final index = _spots.indexOf(spot);
+    if (index < 0) return;
+
+    // Ångra återställer hela listan som den såg ut innan serien började, i
+    // stället för att räkna ut var varje enskild post ska tillbaka. Två
+    // raderingar av index 0 i rad går inte att vända med index -- den andra
+    // posten hamnar före den första. En ögonblicksbild kan inte hamna fel.
+    final undoSpots = _undoSpots ?? _spots;
+    final undoSelected = _undoSpots == null ? _selectedSpot : _undoSelected;
+
     setState(() {
-      _spots = _spots.where((item) => item != spot).toList();
+      _spots = [..._spots]..removeAt(index);
       if (_selectedSpot == spot) {
         _selectedSpot = _spots.isEmpty ? null : _spots.first;
       }
     });
     await _saveSpots();
+    if (!mounted) return;
+
+    _undoSpots = undoSpots;
+    _undoSelected = undoSelected;
+    _undoCount += 1;
+    final count = _undoCount;
+    // Varje SnackBar hör till sin egen generation. En som redan hunnit
+    // börja stängas får inte städa undan ångra-läget för en radering som
+    // gjorts efter den.
+    final generation = ++_undoGeneration;
+
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    messenger
+        .showSnackBar(
+          SnackBar(
+            content: Text(
+              count == 1
+                  ? '${spot.name} borttaget'
+                  : '$count ställen borttagna',
+            ),
+            action: SnackBarAction(
+              label: 'Ångra',
+              onPressed: () => _undoDeletions(generation),
+            ),
+          ),
+        )
+        .closed
+        .then((reason) {
+          // hide betyder att vi själva visade nästa SnackBar, som tagit
+          // över ångra-möjligheten. Allt annat betyder att den löpt ut.
+          if (reason == SnackBarClosedReason.hide) return;
+          if (generation != _undoGeneration) return;
+          _forgetUndo();
+        });
+  }
+
+  Future<void> _undoDeletions(int generation) async {
+    if (!mounted || generation != _undoGeneration) return;
+    final spots = _undoSpots;
+    if (spots == null) return;
+    final selected = _undoSelected;
+    setState(() {
+      _spots = spots;
+      _selectedSpot = selected;
+    });
+    _forgetUndo();
+    await _saveSpots();
+  }
+
+  void _forgetUndo() {
+    _undoSpots = null;
+    _undoSelected = null;
+    _undoCount = 0;
   }
 
   double _distanceTo(Place place) => Geolocator.distanceBetween(
@@ -281,7 +371,13 @@ class _CompassScreenState extends State<CompassScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-          ? _ErrorState(message: _error!, onRetry: _startLocation)
+          ? _ErrorState(
+              message: _error!,
+              onRetry: _startLocation,
+              onOpenSettings: _errorNeedsSettings
+                  ? Geolocator.openAppSettings
+                  : null,
+            )
           : SafeArea(
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
@@ -504,9 +600,14 @@ class _EmptyMushroomCard extends StatelessWidget {
 }
 
 class _ErrorState extends StatelessWidget {
-  const _ErrorState({required this.message, required this.onRetry});
+  const _ErrorState({
+    required this.message,
+    required this.onRetry,
+    this.onOpenSettings,
+  });
   final String message;
   final VoidCallback onRetry;
+  final VoidCallback? onOpenSettings;
   @override
   Widget build(BuildContext context) => Center(
     child: Padding(
@@ -518,7 +619,19 @@ class _ErrorState extends StatelessWidget {
           const SizedBox(height: 16),
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: 18),
-          FilledButton(onPressed: onRetry, child: const Text('Försök igen')),
+          if (onOpenSettings case final open?) ...[
+            FilledButton.icon(
+              onPressed: open,
+              icon: const Icon(Icons.settings_outlined),
+              label: const Text('Öppna inställningar'),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('Jag har slagit på den'),
+            ),
+          ] else
+            FilledButton(onPressed: onRetry, child: const Text('Försök igen')),
         ],
       ),
     ),
