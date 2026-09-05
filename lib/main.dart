@@ -53,6 +53,14 @@ class Place {
   );
 }
 
+/// En radering som fortfarande går att ångra.
+class _Deletion {
+  const _Deletion(this.place, this.index, this.wasSelected);
+  final Place place;
+  final int index;
+  final bool wasSelected;
+}
+
 class CompassScreen extends StatefulWidget {
   const CompassScreen({super.key});
   @override
@@ -72,6 +80,7 @@ class _CompassScreenState extends State<CompassScreen> {
   bool _loading = true;
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
+  final List<_Deletion> _pendingDeletions = [];
 
   @override
   void initState() {
@@ -285,30 +294,57 @@ class _CompassScreenState extends State<CompassScreen> {
     });
     await _saveSpots();
     if (!mounted) return;
+
     // Papperskorgen sitter i samma rad som man trycker på för att välja
-    // ställe, så feltryck är att räkna med. Ångra är mindre i vägen än en
-    // dialog vid varje radering.
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('${spot.name} borttaget'),
-          action: SnackBarAction(
-            label: 'Ångra',
-            onPressed: () => _restoreSpot(spot, index, wasSelected),
-          ),
+    // ställe, så feltryck är att räkna med.
+    //
+    // Raderingar samlas ihop i stället för att ersätta varandra. Att bara
+    // visa en ny SnackBar hade dolt den föregående och tagit med sig dess
+    // Ångra, så en snabb andra radering hade gjort den första permanent.
+    _pendingDeletions.add(_Deletion(spot, index, wasSelected));
+    final pending = List<_Deletion>.of(_pendingDeletions);
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    final snackBar = messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          pending.length == 1
+              ? '${spot.name} borttaget'
+              : '${pending.length} ställen borttagna',
         ),
-      );
+        action: SnackBarAction(
+          label: 'Ångra',
+          onPressed: () => _restoreDeletions(pending),
+        ),
+      ),
+    );
+    // Stängs den för att vi själva visar nästa lever ångra-möjligheten
+    // vidare i den nya. Alla andra sätt att stänga innebär att raderingen
+    // står fast.
+    snackBar.closed.then((reason) {
+      if (reason != SnackBarClosedReason.hide) {
+        _pendingDeletions.clear();
+      }
+    });
   }
 
-  Future<void> _restoreSpot(Place spot, int index, bool wasSelected) async {
+  Future<void> _restoreDeletions(List<_Deletion> pending) async {
     if (!mounted) return;
+    // Stigande ordning, så att varje post hamnar på sitt ursprungliga index.
+    final ordered = [...pending]..sort((a, b) => a.index.compareTo(b.index));
     setState(() {
       final spots = [..._spots];
-      spots.insert(index.clamp(0, spots.length), spot);
+      for (final deletion in ordered) {
+        spots.insert(deletion.index.clamp(0, spots.length), deletion.place);
+      }
       _spots = spots;
-      if (wasSelected) _selectedSpot = spot;
+      for (final deletion in ordered) {
+        if (deletion.wasSelected) {
+          _selectedSpot = deletion.place;
+          break;
+        }
+      }
     });
+    _pendingDeletions.clear();
     await _saveSpots();
   }
 
