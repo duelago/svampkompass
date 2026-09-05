@@ -117,30 +117,20 @@ class _CompassScreenState extends State<CompassScreen> {
   }
 
   Future<void> _startLocation() async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      if (mounted) {
-        setState(() {
-          _error = 'Platstjänster är avstängda.';
-          _loading = false;
-        });
-      }
-      return;
-    }
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        setState(() {
-          _error = 'Tillåt platsåtkomst för att använda kompassen.';
-          _loading = false;
-        });
-      }
-      return;
-    }
     try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        _fail('Platstjänster är avstängda.');
+        return;
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        _fail('Tillåt platsåtkomst för att använda kompassen.');
+        return;
+      }
       final first = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.best,
@@ -155,13 +145,24 @@ class _CompassScreenState extends State<CompassScreen> {
         ),
       ).listen(_updatePosition);
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _error = 'Kunde inte hämta din position än.';
-          _loading = false;
-        });
+      // Behörighetskontrollerna ovan kan också kasta, till exempel på
+      // enheter utan Play Services. Utan det här blocket lämnades appen
+      // på en laddningssnurra utan felmeddelande och utan väg vidare.
+      _fail('Kunde inte hämta din position än.');
+    } finally {
+      // Sista utvägen: lämna aldrig kvar spinnern, oavsett hur vi tog oss ut.
+      if (mounted && _loading) {
+        setState(() => _loading = false);
       }
     }
+  }
+
+  void _fail(String message) {
+    if (!mounted) return;
+    setState(() {
+      _error = message;
+      _loading = false;
+    });
   }
 
   void _updatePosition(Position position) {
@@ -182,6 +183,39 @@ class _CompassScreenState extends State<CompassScreen> {
   Future<void> _setHome() async {
     final position = _position;
     if (position == null) return;
+    final previous = _home;
+    if (previous != null) {
+      // Hempositionen är det appen finns för. Ett felklick på hus-ikonen
+      // ska inte kunna ersätta bilens position med var man råkar stå.
+      final meters = Geolocator.distanceBetween(
+        position.latitude,
+        position.longitude,
+        previous.latitude,
+        previous.longitude,
+      );
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Ersätt hempositionen?'),
+          content: Text(
+            'Du har redan en hemposition ${formatDistance(meters)} härifrån. '
+            'Ersätter du den med platsen du står på nu går den gamla inte '
+            'att få tillbaka.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Behåll den gamla'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Ersätt'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     final place = Place(
       name: 'Startplats',
       latitude: position.latitude,
@@ -240,11 +274,40 @@ class _CompassScreenState extends State<CompassScreen> {
   }
 
   Future<void> _deleteSpot(Place spot) async {
+    final index = _spots.indexOf(spot);
+    if (index < 0) return;
+    final wasSelected = _selectedSpot == spot;
     setState(() {
-      _spots = _spots.where((item) => item != spot).toList();
-      if (_selectedSpot == spot) {
+      _spots = [..._spots]..removeAt(index);
+      if (wasSelected) {
         _selectedSpot = _spots.isEmpty ? null : _spots.first;
       }
+    });
+    await _saveSpots();
+    if (!mounted) return;
+    // Papperskorgen sitter i samma rad som man trycker på för att välja
+    // ställe, så feltryck är att räkna med. Ångra är mindre i vägen än en
+    // dialog vid varje radering.
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('${spot.name} borttaget'),
+          action: SnackBarAction(
+            label: 'Ångra',
+            onPressed: () => _restoreSpot(spot, index, wasSelected),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _restoreSpot(Place spot, int index, bool wasSelected) async {
+    if (!mounted) return;
+    setState(() {
+      final spots = [..._spots];
+      spots.insert(index.clamp(0, spots.length), spot);
+      _spots = spots;
+      if (wasSelected) _selectedSpot = spot;
     });
     await _saveSpots();
   }
