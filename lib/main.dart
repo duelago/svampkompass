@@ -30,6 +30,31 @@ class SvampkompassApp extends StatelessWidget {
   );
 }
 
+/// Storcirkelbäring från punkt 1 till punkt 2, i grader 0–360 medurs.
+///
+/// Referensen är **geografisk** nord, inte magnetisk. Den som jämför värdet
+/// mot en magnetkompass måste först lägga på den lokala missvisningen.
+double bearingBetween(
+  double latitude1,
+  double longitude1,
+  double latitude2,
+  double longitude2,
+) {
+  final phi1 = latitude1 * math.pi / 180;
+  final phi2 = latitude2 * math.pi / 180;
+  final deltaLambda = (longitude2 - longitude1) * math.pi / 180;
+  final y = math.sin(deltaLambda) * math.cos(phi2);
+  final x =
+      math.cos(phi1) * math.sin(phi2) -
+      math.sin(phi1) * math.cos(phi2) * math.cos(deltaLambda);
+  return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
+}
+
+/// Avstånd för visning: hela meter under en kilometer, annars en decimal.
+String formatDistance(double meters) => meters < 1000
+    ? '${meters.round()} m'
+    : '${(meters / 1000).toStringAsFixed(1)} km';
+
 class Place {
   const Place({
     required this.name,
@@ -253,25 +278,15 @@ class _CompassScreenState extends State<CompassScreen> {
     place.latitude,
     place.longitude,
   );
-  double _bearingTo(Place place) {
-    final latitude1 = _position!.latitude * math.pi / 180;
-    final latitude2 = place.latitude * math.pi / 180;
-    final longitudeDifference =
-        (place.longitude - _position!.longitude) * math.pi / 180;
-    final y = math.sin(longitudeDifference) * math.cos(latitude2);
-    final x =
-        math.cos(latitude1) * math.sin(latitude2) -
-        math.sin(latitude1) *
-            math.cos(latitude2) *
-            math.cos(longitudeDifference);
-    return (math.atan2(y, x) * 180 / math.pi + 360) % 360;
-  }
+  double _bearingTo(Place place) => bearingBetween(
+    _position!.latitude,
+    _position!.longitude,
+    place.latitude,
+    place.longitude,
+  );
 
   double _relativeBearing(Place place) =>
       (_bearingTo(place) - (_courseHeading ?? _heading)) * math.pi / 180;
-  String _distance(double meters) => meters < 1000
-      ? '${meters.round()} m'
-      : '${(meters / 1000).toStringAsFixed(1)} km';
 
   @override
   Widget build(BuildContext context) {
@@ -316,7 +331,7 @@ class _CompassScreenState extends State<CompassScreen> {
                     _CompassCard(
                       color: Colors.black,
                       title: 'HEM',
-                      distance: _distance(_distanceTo(_home!)),
+                      distance: formatDistance(_distanceTo(_home!)),
                       angle: _relativeBearing(_home!),
                       prominent: true,
                     )
@@ -337,7 +352,7 @@ class _CompassScreenState extends State<CompassScreen> {
                     _CompassCard(
                       color: _chanterelle,
                       title: _selectedSpot!.name,
-                      distance: _distance(_distanceTo(_selectedSpot!)),
+                      distance: formatDistance(_distanceTo(_selectedSpot!)),
                       angle: _relativeBearing(_selectedSpot!),
                     )
                   else
@@ -376,7 +391,7 @@ class _CompassScreenState extends State<CompassScreen> {
                           onTap: () => setState(() => _selectedSpot = spot),
                           title: Text(spot.name),
                           subtitle: Text(
-                            '${_distanceTo(spot) < 4 ? 'Du är framme' : _distance(_distanceTo(spot))} bort',
+                            '${_distanceTo(spot) < 4 ? 'Du är framme' : formatDistance(_distanceTo(spot))} bort',
                           ),
                           leading: Icon(
                             _selectedSpot == spot
