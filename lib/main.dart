@@ -8,6 +8,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'declination.dart';
 import 'navigation.dart';
 import 'place.dart';
 
@@ -48,6 +49,12 @@ class _CompassScreenState extends State<CompassScreen> {
   Place? _selectedSpot;
   double _heading = 0;
   double? _courseHeading;
+  // Missvisningen på den aktuella platsen, i grader öster om geografisk
+  // nord. Noll tills vi har en position -- då finns ingen kompasspil att
+  // visa ändå.
+  double _declination = 0;
+  double? _declinationLatitude;
+  double? _declinationLongitude;
   String? _error;
   bool _errorNeedsSettings = false;
   bool _loading = true;
@@ -164,6 +171,7 @@ class _CompassScreenState extends State<CompassScreen> {
     // den primära referensen för vägvisaren.
     final hasCourse =
         position.speed >= .7 && position.heading >= 0 && position.heading < 360;
+    _updateDeclination(position);
     setState(() {
       _position = position;
       _courseHeading = hasCourse ? position.heading : null;
@@ -352,8 +360,32 @@ class _CompassScreenState extends State<CompassScreen> {
     place.longitude,
   );
 
-  double _relativeBearing(Place place) =>
-      (_bearingTo(place) - (_courseHeading ?? _heading)) * math.pi / 180;
+  /// Riktningen till en plats relativt den riktning användaren är vänd åt.
+  ///
+  /// Båda leden måste utgå från geografisk nord. GPS:ens course over ground
+  /// gör redan det; magnetkompassen gör det inte, och räknas därför om.
+  double _relativeBearing(Place place) {
+    final reference = _courseHeading ?? trueHeadingFrom(_heading, _declination);
+    return (_bearingTo(place) - reference) * math.pi / 180;
+  }
+
+  /// Missvisningen ändrar sig långsamt över jordytan, så det räcker att räkna
+  /// om den när man flyttat sig märkbart. En tiondels grad är drygt en mil.
+  void _updateDeclination(Position position) {
+    final latitude = position.latitude;
+    final longitude = position.longitude;
+    final previousLatitude = _declinationLatitude;
+    final previousLongitude = _declinationLongitude;
+    if (previousLatitude != null &&
+        previousLongitude != null &&
+        (latitude - previousLatitude).abs() < 0.1 &&
+        (longitude - previousLongitude).abs() < 0.1) {
+      return;
+    }
+    _declination = magneticDeclination(latitude, longitude);
+    _declinationLatitude = latitude;
+    _declinationLongitude = longitude;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -396,7 +428,9 @@ class _CompassScreenState extends State<CompassScreen> {
                   Text(
                     _courseHeading != null
                         ? 'Riktning från din GPS-rörelse'
-                        : 'Riktning från telefonens kompass',
+                        : 'Riktning från telefonens kompass, '
+                              'justerad ${_declination.abs().toStringAsFixed(1)}° '
+                              'för missvisningen',
                     style: TextStyle(color: Colors.black.withValues(alpha: .6)),
                   ),
                   const SizedBox(height: 18),

@@ -240,6 +240,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.2.5"
+  geomag:
+    dependency: "direct main"
+    description:
+      name: geomag
+      sha256: "016ee0cda540fdca6ad26ee8ab598f24959b59f1cc0e1f9ab1bae0bac3594d45"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   gsettings:
     dependency: transitive
     description:
@@ -272,6 +280,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.9.2"
+  intl:
+    dependency: transitive
+    description:
+      name: intl
+      sha256: "1ca20c894b1717686a2319b8548763d812bc0aabdac580420a44c5178c57a867"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.20.3"
   json_annotation:
     dependency: transitive
     description:
