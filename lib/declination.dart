@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show TargetPlatform;
 import 'package:geomag/geomag.dart';
 
 /// Koefficienterna för World Magnetic Model 2025, oförändrade från NOAA:s
@@ -134,3 +135,13 @@ double magneticDeclination(
 /// omräkningen jämförs två olika nordriktningar med varandra.
 double trueHeadingFrom(double magneticHeading, double declination) =>
     (magneticHeading + declination) % 360;
+
+/// Om plattformens kompass behöver korrigeras för missvisning.
+///
+/// flutter_compass läser `CLHeading.trueHeading` på iOS, som redan utgår från
+/// geografisk nord. På Android kommer värdet ur `TYPE_ROTATION_VECTOR` via
+/// `SensorManager.getOrientation` och är magnetiskt. Att lägga på
+/// missvisningen på båda hade gjort felet dubbelt så stort på iOS som det
+/// var på Android innan korrigeringen fanns.
+bool compassNeedsDeclination(TargetPlatform platform) =>
+    platform == TargetPlatform.android;

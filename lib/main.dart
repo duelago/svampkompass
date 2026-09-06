@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_compass/flutter_compass.dart';
@@ -365,9 +366,14 @@ class _CompassScreenState extends State<CompassScreen> {
   /// Båda leden måste utgå från geografisk nord. GPS:ens course over ground
   /// gör redan det; magnetkompassen gör det inte, och räknas därför om.
   double _relativeBearing(Place place) {
-    final reference = _courseHeading ?? trueHeadingFrom(_heading, _declination);
+    final reference = _courseHeading ?? trueHeadingFrom(_heading, _correction);
     return (_bearingTo(place) - reference) * math.pi / 180;
   }
+
+  /// Missvisningen som ska läggas på kompassvärdet, eller noll på plattformar
+  /// vars kompass redan utgår från geografisk nord.
+  double get _correction =>
+      compassNeedsDeclination(defaultTargetPlatform) ? _declination : 0;
 
   /// Missvisningen ändrar sig långsamt över jordytan, så det räcker att räkna
   /// om den när man flyttat sig märkbart. En tiondels grad är drygt en mil.
@@ -428,8 +434,10 @@ class _CompassScreenState extends State<CompassScreen> {
                   Text(
                     _courseHeading != null
                         ? 'Riktning från din GPS-rörelse'
+                        : _correction == 0
+                        ? 'Riktning från telefonens kompass'
                         : 'Riktning från telefonens kompass, '
-                              'justerad ${_declination.abs().toStringAsFixed(1)}° '
+                              'justerad ${_correction.abs().toStringAsFixed(1)}° '
                               'för missvisningen',
                     style: TextStyle(color: Colors.black.withValues(alpha: .6)),
                   ),

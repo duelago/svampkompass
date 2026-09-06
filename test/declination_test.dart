@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show TargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:svampkompass/declination.dart';
 
@@ -81,6 +82,29 @@ void main() {
     test('håller sig inom 0 till 360 åt båda hållen', () {
       expect(trueHeadingFrom(357, 7), closeTo(4, 1e-9));
       expect(trueHeadingFrom(2, -7), closeTo(355, 1e-9));
+    });
+  });
+
+  group('compassNeedsDeclination', () {
+    test('Android ger magnetisk nord och behöver korrigeras', () {
+      expect(compassNeedsDeclination(TargetPlatform.android), isTrue);
+    });
+
+    test('iOS ger redan geografisk nord', () {
+      // flutter_compass läser CLHeading.trueHeading där. Att korrigera igen
+      // hade gjort felet dubbelt så stort som det var från början.
+      expect(compassNeedsDeclination(TargetPlatform.iOS), isFalse);
+    });
+
+    test('övriga plattformar korrigeras inte', () {
+      for (final p in [
+        TargetPlatform.macOS,
+        TargetPlatform.linux,
+        TargetPlatform.windows,
+        TargetPlatform.fuchsia,
+      ]) {
+        expect(compassNeedsDeclination(p), isFalse, reason: '$p');
+      }
     });
   });
 }
