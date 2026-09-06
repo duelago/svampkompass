@@ -1,0 +1,14 @@
+The compass now points to true north. Bearings to a saved spot were compared
+against the phone's magnetic compass, which was off by several degrees while
+standing still.
+
+The home position can no longer be overwritten by accident; it now asks
+first, showing how far away the saved point is.
+
+Deleting a mushroom spot can be undone.
+
+The app no longer gets stuck on a loading spinner when location services
+misbehave, and offers a way forward when permission is permanently denied.
+
+Saved places are read more tolerantly: one corrupt entry no longer discards
+the rest.

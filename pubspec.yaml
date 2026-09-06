@@ -2,7 +2,7 @@ name: svampkompass
 description: "En kompass som visar vägen hem och till sparade svampställen."
 publish_to: 'none'
 
-version: 1.0.1+2002
+version: 1.0.2+2003
 
 environment:
   sdk: ^3.12.2

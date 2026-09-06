@@ -1,0 +1,13 @@
+Kompassen pekar nu mot geografisk nord. Tidigare jämfördes riktningen till
+ett sparat ställe med telefonens magnetkompass, vilket gav några graders fel
+när man stod stilla — cirka 5° i Malmö och 11° i Kiruna.
+
+Hempositionen går inte längre att skriva över av misstag. Nu kommer en fråga
+först, med avståndet till den sparade punkten.
+
+Borttagna svampställen går att ångra.
+
+Appen fastnar inte längre på en laddningssnurra om platstjänsterna krånglar,
+och kommer vidare även när platsåtkomst nekats permanent.
+
+Sparade platser läses in tåligare. En trasig post kastar inte längre resten.
