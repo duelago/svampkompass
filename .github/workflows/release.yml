@@ -1,0 +1,154 @@
+# Bygger och signerar Svampkompassen när en version taggas.
+#
+# Bygget speglar med flit hur F-Droid bygger appen: samma Flutter-version,
+# samma pub-cache i arbetskatalogen, och samma borttagning av Google Play
+# Services. Filerna som laddas upp med suffixet -fdroid.apk är avsedda att
+# vara byte-identiska med F-Droids egna byggen, så att appen kan publiceras
+# signerad av utvecklaren i stället för av F-Droid.
+#
+# F-Droids recept läser Flutter-versionen ur den här filen, ur raden
+# "flutter-version:" nedan. Ändra version här och F-Droid följer med.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Samma placering som F-Droids recept använder, annars matchar inte
+  # sökvägarna som bakas in i de byggda filerna.
+  PUB_CACHE: ${{ github.workspace }}/.pub-cache
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Actions är pinnade till commit-SHA, inte taggar. En tagg kan flyttas
+      # till annan kod; en SHA kan inte. Det spelar roll här eftersom stegen
+      # nedan har tillgång till signeringsnyckeln.
+      - name: Hämta källkoden
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Sätt upp Java
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Sätt upp Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          flutter-version: '3.47.2'
+          channel: stable
+
+      - name: Lägg ut signeringsnyckeln
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          # Före allt annat: en saknad hemlighet levereras som tom sträng och
+          # fångas därför inte av set -u. Utan den här kontrollen faller
+          # bygget först nere i Gradle, med ett fel som inte pekar på orsaken.
+          missing=
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_PASSWORD KEY_ALIAS; do
+            eval "value=\${$name:-}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Saknade hemligheter:$missing. Lägg in dem under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          # umask före omdirigeringen, annars skapas nyckeln som 0644.
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cat > android/key.properties <<EOF
+          storeFile=$RUNNER_TEMP/release.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          EOF
+
+      - name: Hämta paket
+        run: flutter pub get --enforce-lockfile
+
+      - name: Ta bort Google Play Services
+        # Exakt samma ingrepp som F-Droids recept gör. Utan det kompilerar
+        # de två byggena olika kod och binärerna kan aldrig matcha.
+        run: |
+          set -euo pipefail
+          sed -i -e '/com.google.android.gms/d' \
+            "$PUB_CACHE"/hosted/pub.dev/geolocator_android-*/android/build.gradle
+          echo "Kvarvarande träffar (ska vara noll):"
+          ! grep -rq 'com\.google\.android\.gms' "$PUB_CACHE"/hosted/pub.dev/geolocator_android-*/android/build.gradle
+
+      - name: Bygg
+        run: flutter build apk --no-pub --split-per-abi
+
+      - name: Kontrollera att bygget är signerat med rätt nyckel
+        # Fingeravtrycket är inte hemligt -- det står i klartext i varje
+        # signerad APK, och är samma värde som F-Droid kontrollerar mot
+        # AllowedAPKSigningKeys. Utan den här jämförelsen skulle en felaktig
+        # keystore, eller debug-fallbacken i build.gradle.kts, gå igenom tyst
+        # och publiceras.
+        env:
+          EXPECTED_FINGERPRINT: 6c0a871835939e427305ba7e4681e61fc1b5a47a70ca27cdb77ada825979d537
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          for apk in build/app/outputs/flutter-apk/app-*-release.apk; do
+            got=$("$APKSIGNER" verify --print-certs "$apk" \
+              | sed -n 's/.*certificate SHA-256 digest: \([0-9a-f]*\).*/\1/p' | head -1)
+            if [ "$got" != "$EXPECTED_FINGERPRINT" ]; then
+              echo "::error::$(basename "$apk") är signerad med fel nyckel."
+              echo "  förväntat: $EXPECTED_FINGERPRINT"
+              echo "  fick:      ${got:-<ingen signatur>}"
+              exit 1
+            fi
+            echo "$(basename "$apk"): signaturen stämmer"
+          done
+
+      - name: Namnge filerna för F-Droid
+        id: rename
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          AAPT=$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -1)
+          for apk in build/app/outputs/flutter-apk/app-*-release.apk; do
+            abi=$(basename "$apk" | sed -E 's/^app-(.*)-release\.apk$/\1/')
+            code=$("$AAPT" dump badging "$apk" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p")
+            cp "$apk" "dist/${code}-${abi}-fdroid.apk"
+            echo "  $abi -> ${code}-${abi}-fdroid.apk"
+          done
+          ls -l dist/
+
+      - name: Publicera på releasen
+        # Bara taggar publiceras. En manuell körning från en gren skulle
+        # annars skapa en release med grenens namn, eftersom github.ref_name
+        # då är grennamnet. Manuell körning bygger och verifierar ändå, vilket
+        # gör den användbar som torrkörning.
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+          gh release upload "$TAG" dist/*.apk --clobber
+
+      - name: Städa bort nyckeln
+        if: always()
+        run: |
+          shred -u "$RUNNER_TEMP/release.jks" 2>/dev/null || true
+          shred -u android/key.properties 2>/dev/null || true
