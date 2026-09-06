@@ -84,12 +84,39 @@ jobs:
       - name: Ta bort Google Play Services
         # Exakt samma ingrepp som F-Droids recept gör. Utan det kompilerar
         # de två byggena olika kod och binärerna kan aldrig matcha.
+        #
+        # Raderna nedan är kopierade ur de recept som redan är accepterade för
+        # andra geolocator-appar -- chat.fluffy.fluffychat och app.alextran.immich
+        # gör ordagrant detta. Härma dem, ändra dem inte: avviker vi här avviker
+        # binärerna.
+        #
+        # Att bara stryka beroendet ur build.gradle räcker inte. Källkoden
+        # importerar fortfarande com.google.android.gms, och javac faller på 57
+        # fel. Paketets egen NoClassDefFoundError-fälla hjälper inte, för den
+        # fångar vid körning och problemet uppstår vid kompilering. Därför måste
+        # FusedLocationClient bort helt och klientvalet ersättas med den fria
+        # LocationManagerClient.
         run: |
           set -euo pipefail
-          sed -i -e '/com.google.android.gms/d' \
-            "$PUB_CACHE"/hosted/pub.dev/geolocator_android-*/android/build.gradle
-          echo "Kvarvarande träffar (ska vara noll):"
-          ! grep -rq 'com\.google\.android\.gms' "$PUB_CACHE"/hosted/pub.dev/geolocator_android-*/android/build.gradle
+          pkg=$(echo "$PUB_CACHE"/hosted/pub.dev/geolocator_android-*/android)
+          if [ ! -d "$pkg" ]; then
+            echo "::error::hittade inte geolocator_android i $PUB_CACHE"
+            exit 1
+          fi
+          loc="$pkg/src/main/java/com/baseflow/geolocator/location"
+          sed -i -e '/gms/d' "$pkg/build.gradle"
+          rm "$loc/FusedLocationClient.java"
+          sed -i \
+            -e '/if (forceAndroidLocationManager) {/,/^  }/c return new LocationManagerClient(context, locationOptions);}' \
+            -e '/isGooglePlayServicesAvailable/,/^  }/d' \
+            -e '/gms/d' \
+            "$loc/GeolocationManager.java"
+          if grep -rq 'gms' "$pkg"; then
+            echo "::error::gms-referenser kvar i geolocator_android efter ingreppet:"
+            grep -rn 'gms' "$pkg" | head
+            exit 1
+          fi
+          echo "geolocator_android är fri från Play Services"
 
       - name: Bygg
         run: flutter build apk --no-pub --split-per-abi
