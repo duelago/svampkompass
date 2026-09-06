@@ -173,6 +173,28 @@ jobs:
             gh release create "$TAG" --title "$TAG" --generate-notes
           fi
           gh release upload "$TAG" dist/*.apk --clobber
+          # Tar man bort en tagg gör GitHub om dess release till ett utkast.
+          # `gh release view` lyckas på utkast, så kontrollen ovan skapar då
+          # ingen ny release, och filerna blir liggande opublicerade medan
+          # steget ändå rapporterar success. Publicera uttryckligen. Kommandot
+          # är verkningslöst på en release som redan är publicerad.
+          gh release edit "$TAG" --draft=false
+          # Kontrollera att filerna faktiskt går att hämta. En release kan se
+          # rätt ut i API:et och ändå ge 404 utåt, vilket är exakt vad F-Droid
+          # möter när den försöker verifiera bygget.
+          for apk in dist/*.apk; do
+            url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$TAG/$(basename "$apk")"
+            for attempt in 1 2 3 4 5; do
+              code=$(curl -sSL -o /dev/null -w '%{http_code}' -m 60 "$url" || true)
+              [ "$code" = "200" ] && break
+              sleep 10
+            done
+            if [ "$code" != "200" ]; then
+              echo "::error::$url svarar $code, inte 200"
+              exit 1
+            fi
+            echo "$(basename "$apk"): hämtbar"
+          done
 
       - name: Städa bort nyckeln
         if: always()
