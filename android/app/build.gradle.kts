@@ -1,3 +1,4 @@
+import com.android.build.gradle.internal.api.ApkVariantOutputImpl
 import java.util.Properties
 
 // Signeringsuppgifter läses ur android/key.properties, som aldrig checkas in.
@@ -62,6 +63,34 @@ android {
                 // avsett för utveckling och kan inte publiceras.
                 signingConfigs.getByName("debug")
             }
+        }
+    }
+}
+
+// Versionskoder för det ABI-splittade bygget.
+//
+// Flutters standard lägger ABI-siffran överst: abiKod * 1000 + bas, vilket ger
+// 3003 / 4003 / 6003 för basen 2003. Det går sönder vid nästa version, för då
+// är gamla arm64 (4003) högre än nya armeabi (3004). F-Droid behåller bara
+// APK:erna med högst versionskod och arkiverar resten, så en armeabi-telefon
+// skulle aldrig få uppdateringen.
+//
+// F-Droid kräver därför att ABI-siffran ligger längst ner: bas * 10 + abiKod,
+// alltså 20031 / 20032 / 20033. Då ligger alla koder för en ny version över
+// alla koder för den gamla. Ordningen armeabi-v7a < arm64-v8a < x86_64 är
+// också deras krav, eftersom klienten väljer högsta installerbara kod.
+//
+// Se https://f-droid.org/en/docs/Submitting_to_F-Droid_Quick_Start_Guide/#setup-abi-split
+// Motsvaras av VercodeOperation '10 * %c + 1/2/3' i fdroiddata-receptet -- de
+// två måste ändras tillsammans.
+val abiCodes = mapOf("armeabi-v7a" to 1, "arm64-v8a" to 2, "x86_64" to 3)
+android.applicationVariants.configureEach {
+    val variant = this
+    variant.outputs.forEach { output ->
+        val abiVersionCode = abiCodes[output.filters.find { it.filterType == "ABI" }?.identifier]
+        if (abiVersionCode != null) {
+            (output as ApkVariantOutputImpl).versionCodeOverride =
+                variant.versionCode * 10 + abiVersionCode
         }
     }
 }
