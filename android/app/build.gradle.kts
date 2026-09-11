@@ -67,7 +67,7 @@ android {
     }
 }
 
-// Versionskoder för ABI-splittade bygget.
+// Versionskoder för det ABI-splittade bygget.
 //
 // Flutters standard lägger ABI-siffran överst: abiKod * 1000 + bas, vilket ger
 // 3003 / 4003 / 6003 för basen 2003. Det går sönder vid nästa version, för då
