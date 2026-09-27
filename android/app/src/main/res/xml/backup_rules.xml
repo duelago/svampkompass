@@ -5,7 +5,11 @@
   utesluts svampställena helt. Det är den försiktiga tolkningen: hellre
   att de inte följer med ett telefonbyte på en gammal Android än att de
   hamnar i ett moln.
+
+  Båda backends i shared_preferences_android täcks, av samma skäl som
+  står i data_extraction_rules.xml.
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+    <exclude domain="file" path="datastore" />
 </full-backup-content>
