@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Gäller från API 31. Sparade svampställen och hempunkten ligger i
+  FlutterSharedPreferences.xml under nycklarna saved_home_place och
+  mushroom_spots, som koordinater i klartext.
+
+  Appen har ingen INTERNET-behörighet, så backupen är den enda vägen
+  ut för data över huvud taget. Molnbackupen utesluts därför: varken
+  Googles eller tillverkarnas servrar ska få svampställena.
+
+  Telefon-till-telefon-överföring tillåts däremot. Den lämnar aldrig
+  de två enheterna, och att tappa sina ställen vid ett telefonbyte
+  vore en sämre affär för användaren än vinsten av att blockera den.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Ingen exclude: allt får följa med till den nya telefonen. -->
+    </device-transfer>
+</data-extraction-rules>
