@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Gäller API 24-30, där dataExtractionRules inte finns. Den äldre
+  mekanismen skiljer inte på molnbackup och telefonöverföring, så här
+  utesluts svampställena helt. Det är den försiktiga tolkningen: hellre
+  att de inte följer med ett telefonbyte på en gammal Android än att de
+  hamnar i ett moln.
+
+  Båda backends i shared_preferences_android täcks, av samma skäl som
+  står i data_extraction_rules.xml.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+    <exclude domain="file" path="datastore" />
+</full-backup-content>

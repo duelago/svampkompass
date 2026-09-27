@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Gäller från API 31. Sparade svampställen och hempunkten ligger i
+  FlutterSharedPreferences.xml under nycklarna saved_home_place och
+  mushroom_spots, som koordinater i klartext.
+
+  Appen har ingen INTERNET-behörighet, så backupen är den enda vägen
+  ut för data över huvud taget.
+
+  disableIfNoEncryptionCapabilities utesluter appen helt från
+  transporter som inte kan kryptera på klienten. Det uttrycker avsikten
+  strukturellt i stället för en fil i taget, och träffar just det som
+  motiverar reglerna: tillverkarnas egna moln är sämre granskade än
+  Googles, som varit E2E-krypterad sedan Android 9.
+
+  Två exclude-rader, inte en: paketet shared_preferences_android har
+  numera två backends. Den gamla skriver shared_prefs/-filen nedan, den
+  DataStore-baserade skriver files/datastore/. Appen använder i dag den
+  gamla via SharedPreferences.getInstance(), men byter någon till
+  SharedPreferencesAsync slutar en ensam regel matcha utan att något
+  bygge, test eller analys märker det.
+
+  Telefon-till-telefon-överföring tillåts. Observera att det inte bara
+  betyder två telefoner mot varandra: Android 12 lät D2D ignorera
+  allowBackup, och Seedvault har en växel som utger sig för att vara en
+  D2D-överföring just för att kunna säkerhetskopiera appar som valt bort
+  backup. Ställena kan alltså hamna i en Seedvault-backup på ett
+  USB-minne eller en nätverksplats. Den backupen är krypterad med
+  användarens egen återställningsnyckel och görs medvetet av användaren
+  själv, vilket är varför vägen tillåts. Men den lämnar enheten, och
+  det ska stå skrivet i stället för att antas bort.
+-->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <exclude domain="sharedpref" path="FlutterSharedPreferences.xml" />
+        <exclude domain="file" path="datastore" />
+    </cloud-backup>
+    <device-transfer>
+        <!-- Ingen exclude: allt får följa med till den nya telefonen. -->
+    </device-transfer>
+</data-extraction-rules>
